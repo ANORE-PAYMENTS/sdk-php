@@ -1,0 +1,16 @@
+{
+  "name": "anore/sdk",
+  "description": "Official anore payments SDK for PHP — accept SBP, cards and crypto payments. Zero dependencies.",
+  "type": "library",
+  "license": "MIT",
+  "homepage": "https://anore.cc/docs",
+  "keywords": ["anore", "payments", "sbp", "crypto", "yoomoney", "payment-gateway"],
+  "require": {
+    "php": ">=7.4",
+    "ext-curl": "*",
+    "ext-json": "*"
+  },
+  "autoload": {
+    "psr-4": { "Anore\\": "src/" }
+  }
+}
