@@ -2,11 +2,9 @@
 
 namespace Anore\Model;
 
-/** Base for typed response wrappers — keeps the raw decoded array so
- *  forward-compatible fields are never lost. */
 abstract class Model
 {
-    /** @var array */
+
     protected $raw;
 
     public function __construct(array $raw)
@@ -14,7 +12,6 @@ abstract class Model
         $this->raw = $raw;
     }
 
-    /** The underlying decoded JSON (associative array of what the API returned). */
     public function raw(): array
     {
         return $this->raw;

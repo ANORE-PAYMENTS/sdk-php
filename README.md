@@ -8,7 +8,7 @@
 php/
 ├── composer.json
 └── src/
-    ├── Client.php             createPayment, getPayment (cURL + ретраи)
+    ├── Client.php             платежи, баланс и выплаты (cURL + ретраи)
     ├── Webhooks.php           verify / parse
     ├── Model/
     │   ├── Model.php          база моделей
@@ -44,18 +44,34 @@ $payment = $anore->createPayment([
     'description' => 'Подписка Pro',
     'orderId'     => 'order_42',
     'shopId'      => 1, // обязателен для аккаунтовых ключей (an_*)
+    'callbackUrl' => 'https://shop.example/anore/webhook', // необязательно: вебхук для этого заказа
+    'email'       => 'buyer@example.com',                  // необязательно: чек покупателю
 ]);
 echo $payment->paymentUrl(); // отправьте клиента сюда
 
 // 2. проверить статус
 $status = $anore->getPayment($payment->id());
 echo $status->status(); // paid
+
+$page = $anore->listPayments(['shopId' => 1, 'status' => 'paid', 'limit' => 20]);
+$balance = $anore->getBalance(1);
+
+$payout = $anore->createPayout([
+    'amount' => 5000,
+    'method' => 'usdt_ton',
+    'address' => 'UQ...',
+    'shopId' => 1,
+    'externalId' => 'payout_42',
+]);
+echo $payout->id();
 ```
 
 ## Проверка вебхука
 
 При оплате anore шлёт `POST` на ваш URL с заголовком `Anore-Signature`.
 Проверяйте подпись по **сырому** телу запроса (не декодированному JSON):
+
+Тот же обработчик принимает `payout.created`, `payout.processing`, `payout.succeeded`, `payout.failed` и `payout.updated` (ручная корректировка статуса, см. `statusRevision`); используйте `$event->isPayout()`.
 
 ```php
 use Anore\Webhooks;
@@ -97,6 +113,12 @@ try {
 | `new Anore\Client($apiKey, $options)` | клиент; `$options`: `secret`, `baseUrl`, `maxRetries`, `timeout` |
 | `createPayment([...])` | создать счёт → `Payment` |
 | `getPayment($id)` | статус → `Payment` (`->status()`, `->paid()`) |
+| `listPayments([...])` | страница платежей → `PaymentList` |
+| `getBalance($shopId)` | баланс → `Balance` |
+| `getPayoutFees($shopId)` | комиссии → `PayoutFees` |
+| `getPayoutRates($shopId)` | курсы → `PayoutRates` |
+| `createPayout([...])` | заявка → `Payout` |
+| `getPayout($id)` | статус выплаты → `Payout` |
 | `Anore\Webhooks::verify($rawBody, $signature, $secret)` | проверка подписи → `bool` |
 | `Anore\Webhooks::parse($rawBody, $signature, $secret)` | проверка + разбор → `WebhookEvent` (бросает `SignatureException`) |
 

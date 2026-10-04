@@ -2,12 +2,11 @@
 
 namespace Anore\Exception;
 
-/** The API responded with a non-2xx status. */
 class ApiException extends AnoreException
 {
-    /** @var int */
+
     protected $status;
-    /** @var string|null */
+
     protected $requestId;
 
     public function __construct(string $message, int $status, ?string $requestId = null)
@@ -17,19 +16,16 @@ class ApiException extends AnoreException
         $this->requestId = $requestId;
     }
 
-    /** HTTP status code returned by the API. */
     public function getStatus(): int
     {
         return $this->status;
     }
 
-    /** Value of the X-Request-Id response header, if any. */
     public function getRequestId(): ?string
     {
         return $this->requestId;
     }
 
-    /** Map an HTTP status to the most specific ApiException subclass. */
     public static function forStatus(int $status, string $message, ?string $requestId = null): ApiException
     {
         switch ($status) {
