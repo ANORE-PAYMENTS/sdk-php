@@ -18,10 +18,14 @@ class Balance extends Model
     public function legacyPayoutsUnassigned(): bool { return $this->bool('legacyPayoutsUnassigned'); }
     public function fee(): array { return is_array($this->raw['fee'] ?? null) ? $this->raw['fee'] : []; }
     public function minAmount(): ?float { return $this->float('minAmount'); }
+    public function minAmountByMethod(): array { return is_array($this->raw['minAmountByMethod'] ?? null) ? $this->raw['minAmountByMethod'] : []; }
     public function maxAmount(): ?float { return $this->float('maxAmount'); }
+    public function maxAmountByMethod(): array { return is_array($this->raw['maxAmountByMethod'] ?? null) ? $this->raw['maxAmountByMethod'] : []; }
     public function usdtRateRub(): ?float { return $this->float('usdtRateRub'); }
     public function rapiraMarketUsdtRub(): ?float { return $this->float('rapiraMarketUsdtRub'); }
     public function rapiraMarkupPercent(): ?float { return $this->float('rapiraMarkupPercent'); }
+    public function rateBasis(): ?string { return $this->str('rateBasis'); }
+    public function rapiraFixing(): ?string { return $this->str('rapiraFixing'); }
     public function cbrRateRub(): ?float { return $this->float('cbrRateRub'); }
     public function sbpBanks(): array { return is_array($this->raw['sbpBanks'] ?? null) ? $this->raw['sbpBanks'] : []; }
 }

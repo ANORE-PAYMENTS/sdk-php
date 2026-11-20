@@ -4,6 +4,12 @@ namespace Anore\Model;
 
 class Payment extends Model
 {
+    public function __construct(array $raw)
+    {
+        unset($raw['user_identity'], $raw['franchise']);
+        parent::__construct($raw);
+    }
+
     public function success(): bool
     {
         return $this->bool('success');
