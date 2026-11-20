@@ -83,12 +83,25 @@ check('createPayment sends current fields signed over exact bytes', function () 
     $call = calls()[0];
     same('/api/v1/payments', $call['path'], 'path');
     same('Bearer fixture-key', $call['authorization'], 'authorization');
+    same('anore-php/1.3.0', $call['user_agent'], 'user agent');
     same([
         'amount' => 12.34, 'description' => 'Оплата заказа', 'orderId' => '0', 'shopId' => 7, 'currency' => 'usd',
         'methods' => ['card', 'crypto-old'], 'getbackurl' => 'https://m.example/back', 'successurl' => 'https://m.example/ok',
         'failurl' => 'https://m.example/fail', 'callbackUrl' => 'https://m.example/hook', 'email' => 'customer@example.test',
     ], json_decode($call['raw'], true), 'body');
     same(hash_hmac('sha256', $call['raw'], 'fixture-secret'), $call['signature'], 'signature');
+});
+
+check('client options reject invalid values before networking', function () use ($origin) {
+    foreach (["key\r\nX-Injected: yes", ''] as $key) {
+        throws(InvalidArgumentException::class, function () use ($key, $origin) {
+            new Client($key, ['baseUrl' => $origin]);
+        });
+    }
+    throws(InvalidArgumentException::class, function () use ($origin) {
+        new Client('key', ['baseUrl' => $origin, 'secret' => ['not-a-string']]);
+    });
+    same([], calls());
 });
 
 check('base URLs do not duplicate paths', function () use ($origin) {
@@ -121,6 +134,184 @@ check('createPayout sends all fields', function () use ($origin) {
         json_decode(calls()[0]['raw'], true));
 });
 
+check('createPayout preserves integral floats and backend aliases', function () use ($origin) {
+    client($origin)->createPayout(['amount' => 5000.0, 'method' => 'tron', 'address' => 'TAddress']);
+    same(['amount' => 5000, 'method' => 'tron', 'address' => 'TAddress'], json_decode(calls()[0]['raw'], true));
+    throws(InvalidArgumentException::class, function () use ($origin) {
+        client($origin)->createPayout(['amount' => 1.5, 'method' => 'card', 'address' => '4111111111111111']);
+    });
+});
+
+check('payment context uses exact snake_case whitelists', function () use ($origin) {
+    client($origin)->createPayment([
+        'amount' => 10,
+        'description' => 'Context',
+        'user_identity' => [
+            'type' => 'telegram_id',
+            'value' => '9223372036854775807',
+            'telegram_username' => '@buyer_name',
+        ],
+        'franchise' => [
+            'type' => 'website',
+            'address' => 'https://branch.example/',
+            'owner_telegram_id' => 123456789,
+            'owner_telegram_username' => 'owner_name',
+        ],
+    ]);
+    $body = json_decode(calls()[0]['raw'], true);
+    same([
+        'type' => 'telegram_id',
+        'value' => '9223372036854775807',
+        'telegram_username' => 'buyer_name',
+    ], $body['user_identity']);
+    same([
+        'type' => 'website',
+        'address' => 'https://branch.example',
+        'owner_telegram_id' => 123456789,
+        'owner_telegram_username' => 'owner_name',
+    ], $body['franchise']);
+});
+
+check('Unicode contracts count characters and normalize when supported', function () use ($origin) {
+    $client = client($origin);
+    $client->createSubscription([
+        'planId' => str_repeat('п', 80),
+        'customerId' => str_repeat('к', 128),
+        'customerEmail' => 'buyer@example.com',
+        'idempotencyKey' => 'unicode-lengths',
+    ]);
+    if (class_exists('Normalizer')) {
+        $client->createPayment([
+            'amount' => 1,
+            'description' => 'x',
+            'user_identity' => ['type' => 'external_id', 'value' => "ＡＢＣ"],
+            'franchise' => ['type' => 'website', 'address' => 'https://пример.рф/', 'owner_telegram_id' => 1],
+        ]);
+        $body = json_decode(calls()[1]['raw'], true);
+        same('ABC', $body['user_identity']['value']);
+        same('https://xn--e1afmkfd.xn--p1ai', $body['franchise']['address']);
+    } else {
+        throws(InvalidArgumentException::class, function () use ($client) {
+            $client->createPayment([
+                'amount' => 1, 'description' => 'x',
+                'user_identity' => ['type' => 'external_id', 'value' => 'не-ascii'],
+            ]);
+        });
+    }
+});
+
+check('invalid payment context fails before networking', function () use ($origin) {
+    $client = client($origin);
+    $invalidIdentities = [
+        ['type' => 'telegram_id', 'value' => '01'],
+        ['type' => 'telegram_id', 'value' => '9223372036854775808'],
+        ['type' => 'email', 'value' => 'not-an-email'],
+        ['type' => 'email', 'value' => 'x', 'telegram_username' => '@buyer_name'],
+        ['type' => 'username', 'value' => "user\x00name"],
+        ['type' => 'email', 'value' => 'x', 'extra' => true],
+    ];
+    foreach ($invalidIdentities as $value) {
+        throws(InvalidArgumentException::class, function () use ($client, $value) {
+            $client->createPayment(['amount' => 1, 'description' => 'x', 'user_identity' => $value]);
+        });
+    }
+    $invalidFranchises = [
+        ['type' => 'website', 'address' => 'http://branch.example', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://branch.example/path', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://branch.example:443', 'owner_telegram_id' => 1],
+        ['type' => 'telegram_bot', 'address' => '@x', 'owner_telegram_id' => 1],
+        ['type' => 'telegram_bot', 'address' => '@valid_bot', 'owner_telegram_id' => 0],
+        ['type' => 'telegram_bot', 'address' => '@valid_bot', 'owner_telegram_id' => 1, 'secret' => 'no'],
+    ];
+    foreach ($invalidFranchises as $value) {
+        throws(InvalidArgumentException::class, function () use ($client, $value) {
+            $client->createPayment(['amount' => 1, 'description' => 'x', 'franchise' => $value]);
+        });
+    }
+    same([], calls());
+});
+
+check('protected payment context is stripped from payment models only', function () {
+    $payment = new Anore\Model\Payment([
+        'id' => 'p-1',
+        'user_identity' => ['type' => 'email', 'value' => 'secret@example.com'],
+        'franchise' => ['type' => 'website', 'address' => 'https://secret.example'],
+    ]);
+    same(['id' => 'p-1'], $payment->raw());
+    $payout = new Anore\Model\Payout(['id' => 'WD-1', 'metadata' => ['franchise' => 'ordinary-value']]);
+    same('ordinary-value', $payout->raw()['metadata']['franchise']);
+});
+
+check('subscriptions preserve caller idempotency and safe models', function () use ($origin) {
+    $client = client($origin);
+    $catalog = $client->getSubscriptionCatalog();
+    $binding = $client->createSubscription([
+        'planId' => 'plan-pro', 'customerId' => 'customer-42', 'customerEmail' => 'buyer@example.com',
+        'shopId' => 7, 'idempotencyKey' => 'binding-key',
+    ]);
+    $status = $client->getSubscription(42);
+    $charge = $client->chargeSubscription(42, 'charge-key');
+    same(['/api/v1/subscriptions/catalog', '/api/v1/subscriptions', '/api/v1/subscriptions/42',
+        '/api/v1/subscriptions/42/charges'], array_column(calls(), 'path'));
+    same('binding-key', calls()[1]['idempotency_key']);
+    same('charge-key', calls()[3]['idempotency_key']);
+    same(['planId' => 'plan-pro', 'customerId' => 'customer-42', 'customerEmail' => 'buyer@example.com', 'shopId' => 7],
+        json_decode(calls()[1]['raw'], true));
+    same('', calls()[3]['raw']);
+    same(null, $charge->chargeId());
+    same('WD-42', $binding->raw()['id']);
+    same([], $catalog->shops());
+    same(null, $status->paymentMethod());
+});
+
+check('subscription idempotency keys fail before networking', function () use ($origin) {
+    $client = client($origin);
+    foreach (['', '   ', "line\nbreak", str_repeat('x', 129), null, 42] as $key) {
+        throws(InvalidArgumentException::class, function () use ($client, $key) {
+            $client->createSubscription([
+                'planId' => 'p', 'customerId' => 'c', 'customerEmail' => 'e@example.com', 'idempotencyKey' => $key,
+            ]);
+        });
+        if (is_string($key)) {
+            throws(InvalidArgumentException::class, function () use ($client, $key) {
+                $client->chargeSubscription(42, $key);
+            });
+        }
+    }
+    $client->chargeSubscription(42, str_repeat('c', 128));
+    throws(InvalidArgumentException::class, function () use ($client) {
+        $client->chargeSubscription(42, str_repeat('c', 129));
+    });
+    same(1, count(calls()));
+});
+
+check('subscription request validation rejects values outside the public contract', function () use ($origin) {
+    $client = client($origin);
+    foreach ([
+        ['planId' => str_repeat('p', 81), 'customerId' => 'c', 'customerEmail' => 'e@example.com'],
+        ['planId' => 'p', 'customerId' => str_repeat('c', 129), 'customerEmail' => 'e@example.com'],
+        ['planId' => 'p', 'customerId' => 'c', 'customerEmail' => 'not-an-email'],
+        ['planId' => 'p', 'customerId' => 'c', 'customerEmail' => 'e@example.com', 'shopId' => 0],
+    ] as $params) {
+        $params['idempotencyKey'] = 'key';
+        throws(InvalidArgumentException::class, function () use ($client, $params) {
+            $client->createSubscription($params);
+        });
+    }
+    same([], calls());
+});
+
+check('list payouts uses cursor pagination', function () use ($origin) {
+    $page = client($origin)->listPayouts(['shopId' => 7, 'limit' => 25, 'cursor' => 'opaque']);
+    same('/api/v1/payouts?limit=25&shopId=7&cursor=opaque', calls()[0]['path']);
+    same([], $page->payouts());
+    foreach ([['limit' => 101], ['shopId' => 0], ['cursor' => [1]], ['unknown' => true]] as $params) {
+        throws(InvalidArgumentException::class, function () use ($origin, $params) {
+            client($origin)->listPayouts($params);
+        });
+    }
+});
+
 check('GET retries server errors', function () use ($origin) {
     same('ok', client($origin . '/flaky')->getPayment('x')->id());
     same(2, count(calls()));
@@ -132,7 +323,22 @@ check('POST never retries server errors', function () use ($origin) {
     throws(ServerException::class, function () use ($client) {
         $client->createPayout(['amount' => 5000, 'method' => 'card', 'address' => '4111111111111111']);
     });
-    same(2, count(calls()));
+    throws(ServerException::class, function () use ($client) {
+        $client->createSubscription([
+            'planId' => 'p', 'customerId' => 'c', 'customerEmail' => 'e@example.com', 'idempotencyKey' => 'same-key',
+        ]);
+    });
+    throws(ServerException::class, function () use ($client) { $client->chargeSubscription(42, 'same-key'); });
+    same(4, count(calls()));
+    try {
+        $client->createSubscription([
+            'planId' => 'p', 'customerId' => 'c', 'customerEmail' => 'e@example.com', 'idempotencyKey' => 'details-key',
+        ]);
+    } catch (ServerException $e) {
+        same('binding_reconciling', $e->getResponseBody()['code']);
+        same(42, $e->getResponseBody()['subscriptionId']);
+    }
+    same(5, count(calls()));
 });
 
 check('API errors keep message, status and request id', function () use ($origin) {
@@ -143,6 +349,8 @@ check('API errors keep message, status and request id', function () use ($origin
         same('amount must be > 0', $e->getMessage());
         same(400, $e->getStatus());
         same('fixture-request', $e->getRequestId());
+        same('invalid_amount', $e->getResponseBody()['code']);
+        same(42, $e->getResponseBody()['subscriptionId']);
     }
 });
 
