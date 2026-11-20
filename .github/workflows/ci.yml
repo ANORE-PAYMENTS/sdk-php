@@ -23,7 +23,7 @@ jobs:
           extensions: curl, json
           coverage: none
       - run: composer validate --strict
-      - run: composer install --no-interaction --no-progress
+      - run: composer install --no-interaction --no-progress --prefer-dist
       - run: php tests/run.php
       - run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: composer archive --format=zip --dir=/tmp

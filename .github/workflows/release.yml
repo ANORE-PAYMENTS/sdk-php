@@ -1,30 +1,60 @@
 name: Release gate
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to validate (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+
 jobs:
-  verify:
-    if: startsWith(github.event.release.tag_name, 'v')
+  validate:
     runs-on: ubuntu-latest
     steps:
+      - name: Require an exact semantic-version tag input
+        shell: bash
+        run: '[[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]'
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Verify checkout exactly matches the existing tag
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n1 "$RELEASE_TAG")"
+          test "$(git describe --tags --exact-match HEAD)" = "$RELEASE_TAG"
+          test -z "$(git status --porcelain)"
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
           extensions: curl, json
           coverage: none
-      - name: Verify semantic release tag
-        shell: bash
-        run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
       - run: composer validate --strict
-      - run: composer install --no-interaction --no-progress
+      - run: composer install --no-interaction --no-progress --prefer-dist
       - run: php tests/run.php
       - run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: composer archive --format=zip --dir=/tmp
+      - name: Confirm tracked source remains clean
+        shell: bash
+        run: git diff --exit-code && git diff --cached --exit-code
+      - uses: actions/upload-artifact@v6
+        with:
+          name: anore-sdk-php-${{ inputs.tag }}
+          path: /tmp/*.zip
+          if-no-files-found: error
+
+  publish-approval:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: composer-release-approval
+    steps:
+      - name: Publishing intentionally disabled
+        run: |
+          echo "Validation and approval completed; this workflow does not publish or create tags."

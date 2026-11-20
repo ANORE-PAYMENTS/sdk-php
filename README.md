@@ -1,6 +1,6 @@
 # ANORE — PHP SDK
 
-Официальный SDK ANORE для платежей, подписок и выплат. Нулевые runtime-зависимости; требуются PHP 7.4+, `ext-curl` и `ext-json`.
+Официальный SDK ANORE для платежей, подписок и выплат. Требуются PHP 7.4+, `ext-curl` и `ext-json`; Composer устанавливает поддерживаемые Symfony polyfills для Unicode NFKC, lowercase и IDN без обязательных platform `intl`/`mbstring`.
 
 ## Установка
 
@@ -78,7 +78,7 @@ $status = $anore->getSubscription($binding->subscriptionId());
 $charge = $anore->chargeSubscription($binding->subscriptionId(), 'charge-2026-11-customer-42');
 ```
 
-Ключ `Idempotency-Key` всегда задаёт вызывающий код (непустая строка до 128 байт). SDK никогда автоматически не повторяет POST. При `503 binding_reconciling` сохраните тот же ключ и идентичное тело, не создавайте новый ключ и не запускайте параллельную привязку. Структурированное тело ошибки доступно через `$e->getResponseBody()`, включая `subscriptionId`, если API его вернул.
+Ключ `Idempotency-Key` всегда задаёт вызывающий код (непустая строка до 128 Unicode-символов). SDK никогда автоматически не повторяет POST. При `503 binding_reconciling` сохраните тот же ключ и идентичное тело, не создавайте новый ключ и не запускайте параллельную привязку. Структурированное тело ошибки доступно через `$e->getResponseBody()`, включая `subscriptionId`, если API его вернул.
 
 ## Выплаты
 

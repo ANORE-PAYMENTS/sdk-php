@@ -1,6 +1,6 @@
 {
   "name": "anore/sdk",
-  "description": "Official ANORE payments SDK for PHP — payments, subscriptions and payouts with zero runtime dependencies.",
+  "description": "Official ANORE payments SDK for PHP — payments, subscriptions and payouts.",
   "type": "library",
   "license": "MIT",
   "homepage": "https://anore.cc/docs",
@@ -13,7 +13,10 @@
   "require": {
     "php": ">=7.4",
     "ext-curl": "*",
-    "ext-json": "*"
+    "ext-json": "*",
+    "symfony/polyfill-intl-idn": "^1.31",
+    "symfony/polyfill-intl-normalizer": "^1.31",
+    "symfony/polyfill-mbstring": "^1.31"
   },
   "autoload": {
     "psr-4": { "Anore\\": "src/" }
