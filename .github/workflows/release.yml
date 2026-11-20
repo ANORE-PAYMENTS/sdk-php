@@ -44,7 +44,7 @@ jobs:
       - name: Confirm tracked source remains clean
         shell: bash
         run: git diff --exit-code && git diff --cached --exit-code
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: anore-sdk-php-${{ inputs.tag }}
           path: /tmp/*.zip
