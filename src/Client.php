@@ -183,7 +183,11 @@ class Client
 
     public function createPayout(array $params): Payout
     {
-        self::rejectUnknownFields($params, ['amount', 'method', 'address', 'shopId', 'bank', 'externalId'], 'createPayout');
+        foreach (array_keys($params) as $key) {
+            if (!is_string($key)) {
+                throw new \InvalidArgumentException('createPayout contains an invalid field name');
+            }
+        }
         $amount = $params['amount'] ?? null;
         $method = $params['method'] ?? '';
         $address = $params['address'] ?? '';
@@ -191,22 +195,17 @@ class Client
             || $amount < 1 || floor((float) $amount) !== (float) $amount) {
             throw new \InvalidArgumentException('createPayout: amount must be a positive integral number');
         }
-        if (!is_string($method) || !in_array(strtolower(trim($method)), [
-            'card', 'card_rub', 'rub_card',
-            'usdt_ton', 'toncoin', 'usdt_bep20', 'usdt',
-            'usdt_erc20', 'erc20', 'usdt_trc20', 'trc20', 'tron',
-        ], true)) {
-            throw new \InvalidArgumentException('createPayout: method is unsupported');
+        if (!is_string($method) || trim($method) === '' || self::unicodeLength($method) > 190
+            || preg_match('/[\p{Cc}\p{Cf}]/u', $method)) {
+            throw new \InvalidArgumentException('createPayout: method must be a nonempty safe string');
         }
-        if (!is_string($address) || $address === '' || strlen($address) > 190) {
+        if (!is_string($address) || trim($address) === '' || self::unicodeLength($address) > 190) {
             throw new \InvalidArgumentException('createPayout: address must be a string of 1 to 190 characters');
         }
-        $body = ['amount' => $amount, 'method' => $method, 'address' => $address];
-        foreach (['shopId', 'bank', 'externalId'] as $key) {
-            if (array_key_exists($key, $params) && $params[$key] !== null && $params[$key] !== '') {
-                $body[$key] = $params[$key];
-            }
-        }
+        $body = $params;
+        $body['amount'] = $amount;
+        $body['method'] = $method;
+        $body['address'] = $address;
         return new Payout($this->request('POST', '/payouts', $body));
     }
 
@@ -267,17 +266,11 @@ class Client
 
     private static function normalizeNfkc(string $value, string $label): string
     {
-        if (class_exists('Normalizer')) {
-            $normalized = \Normalizer::normalize($value, \Normalizer::FORM_KC);
-            if (!is_string($normalized)) {
-                throw new \InvalidArgumentException($label . ' must be valid Unicode');
-            }
-            return $normalized;
+        $normalized = \Normalizer::normalize($value, \Normalizer::FORM_KC);
+        if (!is_string($normalized)) {
+            throw new \InvalidArgumentException($label . ' must be valid Unicode');
         }
-        if (preg_match('/[^\x00-\x7F]/', $value)) {
-            throw new \InvalidArgumentException($label . ' requires ext-intl for non-ASCII Unicode normalization');
-        }
-        return $value;
+        return $normalized;
     }
 
     private static function email(string $value, string $label): string
@@ -298,10 +291,10 @@ class Client
 
     private static function validateIdempotencyKey($value, string $operation): void
     {
-        if (!is_string($value) || trim($value) === '' || strlen($value) > 128
+        if (!is_string($value) || trim($value) === '' || self::unicodeLength($value) > 128
             || preg_match('/[\r\n]/', $value)) {
             throw new \InvalidArgumentException(
-                $operation . ': idempotencyKey must be a nonempty string of at most 128 bytes without line breaks'
+                $operation . ': idempotencyKey must be a nonempty string of at most 128 characters without line breaks'
             );
         }
     }
@@ -373,9 +366,7 @@ class Client
                 throw new \InvalidArgumentException($label . '.value must be a nonempty string of at most 190 characters without control characters');
             }
             if ($type === 'username') {
-                $identity = function_exists('mb_strtolower')
-                    ? mb_strtolower($identity, 'UTF-8')
-                    : strtolower($identity);
+                $identity = mb_strtolower($identity, 'UTF-8');
             }
         }
         $body = ['type' => $type, 'value' => $identity];
@@ -420,6 +411,9 @@ class Client
 
     private static function validateHttpsOrigin(string $value, string $label): string
     {
+        if (preg_match('/[\x00-\x20\x7f]/', $value) || strpos($value, '%') !== false) {
+            throw new \InvalidArgumentException($label . ' must be a canonical HTTPS origin');
+        }
         $parts = parse_url($value);
         if ($parts === false || strtolower($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])
@@ -428,19 +422,40 @@ class Client
             throw new \InvalidArgumentException($label . ' must be a canonical HTTPS origin');
         }
         $host = rtrim(strtolower($parts['host']), '.');
-        if (preg_match('/[^\x00-\x7F]/', $host)) {
-            if (!function_exists('idn_to_ascii')) {
-                throw new \InvalidArgumentException($label . ' requires ext-intl for an internationalized host');
-            }
-            $flags = defined('IDNA_DEFAULT') ? IDNA_DEFAULT : 0;
+        if ($host[0] !== '[' || substr($host, -1) !== ']') {
+            $flags = defined('IDNA_NONTRANSITIONAL_TO_ASCII') ? IDNA_NONTRANSITIONAL_TO_ASCII : 0;
             $variant = defined('INTL_IDNA_VARIANT_UTS46') ? INTL_IDNA_VARIANT_UTS46 : 1;
-            $ascii = idn_to_ascii($host, $flags, $variant);
-            if (!is_string($ascii) || $ascii === '') {
-                throw new \InvalidArgumentException($label . ' has an invalid internationalized host');
+            $ascii = idn_to_ascii($host, $flags, $variant, $info);
+            if (!is_string($ascii) || $ascii === '' || !empty($info['errors'])) {
+                throw new \InvalidArgumentException($label . ' has an invalid host');
             }
             $host = strtolower($ascii);
         }
+        if (!self::validOriginHost($host)) {
+            throw new \InvalidArgumentException($label . ' has an invalid host');
+        }
         return 'https://' . $host;
+    }
+
+    private static function validOriginHost(string $host): bool
+    {
+        $candidate = $host;
+        if ($candidate[0] === '[' && substr($candidate, -1) === ']') {
+            $candidate = substr($candidate, 1, -1);
+        }
+        if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+            return true;
+        }
+        if (strlen($host) > 253 || strpos($host, '..') !== false) {
+            return false;
+        }
+        foreach (explode('.', $host) as $label) {
+            if ($label === '' || strlen($label) > 63
+                || !preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/D', $label)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function shopPath(string $path, ?int $shopId): string

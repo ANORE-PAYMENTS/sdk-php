@@ -1,12 +1,12 @@
 <?php
 
-// Запуск: php tests/run.php (нужны ext-curl и php -S).
-spl_autoload_register(function ($class) {
-    $file = __DIR__ . '/../src/' . str_replace('\\', '/', substr($class, strlen('Anore\\'))) . '.php';
-    if (strpos($class, 'Anore\\') === 0 && is_file($file)) {
-        require $file;
-    }
-});
+// Запуск: composer install && php tests/run.php (нужны ext-curl и php -S).
+$composerAutoload = __DIR__ . '/../vendor/autoload.php';
+if (is_file($composerAutoload)) {
+    require $composerAutoload;
+} else {
+    throw new RuntimeException('Run composer install before the test suite');
+}
 
 use Anore\Client;
 use Anore\Exception\ServerException;
@@ -134,9 +134,19 @@ check('createPayout sends all fields', function () use ($origin) {
         json_decode(calls()[0]['raw'], true));
 });
 
-check('createPayout preserves integral floats and backend aliases', function () use ($origin) {
-    client($origin)->createPayout(['amount' => 5000.0, 'method' => 'tron', 'address' => 'TAddress']);
-    same(['amount' => 5000, 'method' => 'tron', 'address' => 'TAddress'], json_decode(calls()[0]['raw'], true));
+check('createPayout preserves integral floats, aliases and extensions', function () use ($origin) {
+    client($origin)->createPayout([
+        'amount' => 5000.0,
+        'method' => 'future_chain',
+        'address' => str_repeat('я', 100),
+        'metadata' => ['tenant' => 'branch-7'],
+    ]);
+    same([
+        'amount' => 5000,
+        'method' => 'future_chain',
+        'address' => str_repeat('я', 100),
+        'metadata' => ['tenant' => 'branch-7'],
+    ], json_decode(calls()[0]['raw'], true));
     throws(InvalidArgumentException::class, function () use ($origin) {
         client($origin)->createPayout(['amount' => 1.5, 'method' => 'card', 'address' => '4111111111111111']);
     });
@@ -172,32 +182,38 @@ check('payment context uses exact snake_case whitelists', function () use ($orig
     ], $body['franchise']);
 });
 
-check('Unicode contracts count characters and normalize when supported', function () use ($origin) {
+check('Unicode contracts count and normalize characters through polyfills', function () use ($origin) {
     $client = client($origin);
     $client->createSubscription([
         'planId' => str_repeat('п', 80),
         'customerId' => str_repeat('к', 128),
         'customerEmail' => 'buyer@example.com',
-        'idempotencyKey' => 'unicode-lengths',
+        'idempotencyKey' => str_repeat('и', 128),
     ]);
-    if (class_exists('Normalizer')) {
+    $client->createPayment([
+        'amount' => 1,
+        'description' => 'x',
+        'user_identity' => ['type' => 'external_id', 'value' => "éＡＢＣ"],
+        'franchise' => ['type' => 'website', 'address' => 'https://пример.рф/', 'owner_telegram_id' => 1],
+    ]);
+    $body = json_decode(calls()[1]['raw'], true);
+    same('éABC', $body['user_identity']['value']);
+    same('https://xn--e1afmkfd.xn--p1ai', $body['franchise']['address']);
+    $client->createPayment([
+        'amount' => 1,
+        'description' => 'x',
+        'user_identity' => ['type' => 'username', 'value' => 'ПОЛЬЗОВАТЕЛЬ'],
+    ]);
+    same('пользователь', json_decode(calls()[2]['raw'], true)['user_identity']['value']);
+    foreach (['https://127.0.0.1', 'https://[2001:db8::1]'] as $address) {
         $client->createPayment([
             'amount' => 1,
             'description' => 'x',
-            'user_identity' => ['type' => 'external_id', 'value' => "ＡＢＣ"],
-            'franchise' => ['type' => 'website', 'address' => 'https://пример.рф/', 'owner_telegram_id' => 1],
+            'franchise' => ['type' => 'website', 'address' => $address, 'owner_telegram_id' => 1],
         ]);
-        $body = json_decode(calls()[1]['raw'], true);
-        same('ABC', $body['user_identity']['value']);
-        same('https://xn--e1afmkfd.xn--p1ai', $body['franchise']['address']);
-    } else {
-        throws(InvalidArgumentException::class, function () use ($client) {
-            $client->createPayment([
-                'amount' => 1, 'description' => 'x',
-                'user_identity' => ['type' => 'external_id', 'value' => 'не-ascii'],
-            ]);
-        });
     }
+    same('https://127.0.0.1', json_decode(calls()[3]['raw'], true)['franchise']['address']);
+    same('https://[2001:db8::1]', json_decode(calls()[4]['raw'], true)['franchise']['address']);
 });
 
 check('invalid payment context fails before networking', function () use ($origin) {
@@ -219,6 +235,11 @@ check('invalid payment context fails before networking', function () use ($origi
         ['type' => 'website', 'address' => 'http://branch.example', 'owner_telegram_id' => 1],
         ['type' => 'website', 'address' => 'https://branch.example/path', 'owner_telegram_id' => 1],
         ['type' => 'website', 'address' => 'https://branch.example:443', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://-bad.com', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://a..com', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://foo_bar.com', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => 'https://foo%2ebar.com', 'owner_telegram_id' => 1],
+        ['type' => 'website', 'address' => "https://good.example\n.evil", 'owner_telegram_id' => 1],
         ['type' => 'telegram_bot', 'address' => '@x', 'owner_telegram_id' => 1],
         ['type' => 'telegram_bot', 'address' => '@valid_bot', 'owner_telegram_id' => 0],
         ['type' => 'telegram_bot', 'address' => '@valid_bot', 'owner_telegram_id' => 1, 'secret' => 'no'],
@@ -278,9 +299,9 @@ check('subscription idempotency keys fail before networking', function () use ($
             });
         }
     }
-    $client->chargeSubscription(42, str_repeat('c', 128));
+    $client->chargeSubscription(42, str_repeat('с', 128));
     throws(InvalidArgumentException::class, function () use ($client) {
-        $client->chargeSubscription(42, str_repeat('c', 129));
+        $client->chargeSubscription(42, str_repeat('с', 129));
     });
     same(1, count(calls()));
 });
