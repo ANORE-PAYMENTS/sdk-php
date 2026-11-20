@@ -9,6 +9,8 @@ file_put_contents($log, json_encode([
     'path' => $_SERVER['REQUEST_URI'],
     'signature' => $headers['x-zpay-signature'] ?? null,
     'authorization' => $headers['authorization'] ?? null,
+    'user_agent' => $headers['user-agent'] ?? null,
+    'idempotency_key' => $headers['idempotency-key'] ?? null,
     'raw' => $raw,
 ]) . "\n", FILE_APPEND);
 
@@ -20,7 +22,7 @@ header('X-Request-Id: fixture-request');
 switch ($mode) {
     case 'e503':
         http_response_code(503);
-        echo '{"message":"busy"}';
+        echo '{"message":"binding reconciliation pending","code":"binding_reconciling","subscriptionId":42}';
         break;
     case 'flaky':
         if ($calls % 2 === 1) {
@@ -32,7 +34,7 @@ switch ($mode) {
         break;
     case 'e400':
         http_response_code(400);
-        echo '{"message":"amount must be > 0"}';
+        echo '{"message":"amount must be > 0","code":"invalid_amount","subscriptionId":42}';
         break;
     case 'notjson':
         echo '<html>oops</html>';
